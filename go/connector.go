@@ -23,18 +23,13 @@ package athenadriver
 import (
 	"context"
 	"database/sql/driver"
-
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/athena"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/athena"
 )
 
 // SQLConnector is the connector for AWS Athena Driver.
@@ -57,12 +52,13 @@ func (c *SQLConnector) Driver() driver.Driver {
 	return &SQLDriver{}
 }
 
-// Connect is to create an AWS session.
-// The order to find auth information to create session is:
-// 1. Manually set  AWS profile in Config by calling config.SetAWSProfile(profileName)
-// 2. AWS_SDK_LOAD_CONFIG
-// 3. Static Credentials
-// Ref: https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html
+// Connect creates an AWS session.
+// Credentials are loaded from one of several sources as using the default credential chain:
+// 1. Environment variables
+// 2. Shared configuration files
+// 3. ECS task roles
+// 4. EC2 instance profiles
+// Ref: https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-gosdk.html
 func (c *SQLConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	now := time.Now()
 	c.tracer = NewDefaultObservability(c.config)
@@ -73,37 +69,13 @@ func (c *SQLConnector) Connect(ctx context.Context) (driver.Conn, error) {
 		c.tracer.SetLogger(logger)
 	}
 
-	var awsAthenaSession *session.Session
-	var err error
-	// respect AWS_SDK_LOAD_CONFIG and local ~/.aws/credentials, ~/.aws/config
-	if ok, _ := strconv.ParseBool(os.Getenv("AWS_SDK_LOAD_CONFIG")); ok {
-		if profile := c.config.GetAWSProfile(); profile != "" {
-			awsAthenaSession, err = session.NewSession(&aws.Config{
-				Credentials: credentials.NewSharedCredentials("", profile),
-			})
-		} else {
-			awsAthenaSession, err = session.NewSession(&aws.Config{})
-		}
-	} else if c.config.GetAccessID() != "" {
-		staticCredentials := credentials.NewStaticCredentials(c.config.GetAccessID(),
-			c.config.GetSecretAccessKey(),
-			c.config.GetSessionToken())
-		awsConfig := &aws.Config{
-			Region:      aws.String(c.config.GetRegion()),
-			Credentials: staticCredentials,
-		}
-		awsAthenaSession, err = session.NewSession(awsConfig)
-	} else {
-		awsAthenaSession, err = session.NewSession(&aws.Config{
-			Region: aws.String(c.config.GetRegion()),
-		})
-	}
+	awsCfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		c.tracer.Scope().Counter(DriverName + ".failure.sqlconnector.newsession").Inc(1)
 		return nil, err
 	}
 
-	athenaAPI := athena.New(awsAthenaSession)
+	athenaAPI := athena.NewFromConfig(awsCfg)
 	timeConnect := time.Since(now)
 	conn := &Connection{
 		athenaAPI: athenaAPI,

@@ -76,7 +76,7 @@ func TestSQLConnector_Connect(t *testing.T) {
 func TestSQLConnector_Connect_NewSessionFail(t *testing.T) {
 	testConf := NewNoOpsConfig()
 	_ = testConf.SetRegion("ap-southeast-1")
-	os.Setenv("AWS_SDK_LOAD_CONFIG", "1")
+	os.Setenv("AWS_PROFILE", "baaaad")
 	os.Setenv("AWS_STS_REGIONAL_ENDPOINTS", "123")
 	connector := &SQLConnector{
 		config: testConf,
@@ -84,8 +84,8 @@ func TestSQLConnector_Connect_NewSessionFail(t *testing.T) {
 	}
 	conn, err := connector.Connect(context.Background())
 
-	os.Unsetenv("AWS_SDK_LOAD_CONFIG")
 	os.Unsetenv("AWS_STS_REGIONAL_ENDPOINTS")
+	os.Unsetenv("AWS_PROFILE")
 	assert.NotNil(t, err)
 	assert.Nil(t, conn)
 }
@@ -93,14 +93,12 @@ func TestSQLConnector_Connect_NewSessionFail(t *testing.T) {
 func TestSQLConnector_Connect_NewSession_AWS_SDK_LOAD_CONFIG_true(t *testing.T) {
 	testConf := NewNoOpsConfig()
 	_ = testConf.SetRegion("ap-southeast-1")
-	os.Setenv("AWS_SDK_LOAD_CONFIG", "true")
 	connector := &SQLConnector{
 		config: testConf,
 		tracer: NewDefaultObservability(testConf),
 	}
 	conn, err := connector.Connect(context.Background())
 
-	os.Unsetenv("AWS_SDK_LOAD_CONFIG")
 	os.Unsetenv("AWS_STS_REGIONAL_ENDPOINTS")
 	assert.Nil(t, err)
 	assert.NotNil(t, conn)
@@ -110,14 +108,12 @@ func TestSQLConnector_Connect_NewSession_AWS_SDK_LOAD_CONFIG_true_AWSProfile_Set
 	testConf := NewNoOpsConfig()
 	_ = testConf.SetRegion("ap-southeast-1")
 	testConf.SetAWSProfile("hello-profile")
-	os.Setenv("AWS_SDK_LOAD_CONFIG", "true")
 	connector := &SQLConnector{
 		config: testConf,
 		tracer: NewDefaultObservability(testConf),
 	}
 	conn, err := connector.Connect(context.Background())
 
-	os.Unsetenv("AWS_SDK_LOAD_CONFIG")
 	os.Unsetenv("AWS_STS_REGIONAL_ENDPOINTS")
 	assert.Nil(t, err)
 	assert.NotNil(t, conn)
@@ -126,14 +122,12 @@ func TestSQLConnector_Connect_NewSession_AWS_SDK_LOAD_CONFIG_true_AWSProfile_Set
 func TestSQLConnector_Connect_NewSession_AWS_SDK_LOAD_CONFIG_false(t *testing.T) {
 	testConf := NewNoOpsConfig()
 	_ = testConf.SetRegion("ap-southeast-1")
-	os.Setenv("AWS_SDK_LOAD_CONFIG", "0")
 	connector := &SQLConnector{
 		config: testConf,
 		tracer: NewDefaultObservability(testConf),
 	}
 	conn, err := connector.Connect(context.Background())
 
-	os.Unsetenv("AWS_SDK_LOAD_CONFIG")
 	os.Unsetenv("AWS_STS_REGIONAL_ENDPOINTS")
 	assert.Nil(t, err)
 	assert.NotNil(t, conn)

@@ -23,9 +23,11 @@ package athenadriver
 import (
 	"net/url"
 	"regexp"
-	"strings"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/uber/athenadriver/go/internal/pretty"
 )
 
 // Config is for AWS Athena Driver Config.
@@ -35,9 +37,11 @@ type Config struct {
 	values url.Values `yaml:"values"`
 }
 
-var reSecretAccessKey = regexp.MustCompile(`secretAccessKey=[^&]+`)
-var reAccessID = regexp.MustCompile(`accessID=[^&]+`)
-var reSessionToken = regexp.MustCompile(`sessionToken=[^&]+`)
+var (
+	reSecretAccessKey = regexp.MustCompile(`secretAccessKey=[^&]+`)
+	reAccessID        = regexp.MustCompile(`accessID=[^&]+`)
+	reSessionToken    = regexp.MustCompile(`sessionToken=[^&]+`)
+)
 
 var (
 	credAccessEnvKey = []string{
@@ -63,7 +67,8 @@ var (
 
 // NewDefaultConfig is to new a Config with some default values.
 func NewDefaultConfig(outputBucket string, region string, accessID string,
-	secretAccessKey string) (*Config, error) {
+	secretAccessKey string,
+) (*Config, error) {
 	conf := NewNoOpsConfig()
 	err := conf.SetOutputBucket(outputBucket)
 	if err != nil {
@@ -227,7 +232,7 @@ func (c *Config) SetWorkGroup(w *Workgroup) error {
 	if w.Config == nil {
 		w.Config = GetDefaultWGConfig()
 	}
-	c.values.Set("workgroupConfig", w.Config.String())
+	c.values.Set("workgroupConfig", pretty.Print(*w.Config))
 	return nil
 }
 
@@ -349,7 +354,6 @@ func (c *Config) SetMissingAsDefault(b bool) {
 	} else {
 		c.values.Set("missingAsDefault", "false")
 	}
-
 }
 
 // SetMissingAsNil is to set if missing value is returned as nil.

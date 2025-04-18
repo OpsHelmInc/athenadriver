@@ -23,22 +23,22 @@ package athenadriver
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/service/athena"
-	"github.com/aws/aws-sdk-go/service/athena/athenaiface"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	"github.com/aws/aws-sdk-go-v2/service/athena"
+	"github.com/aws/aws-sdk-go-v2/service/athena/types"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // genQueryResultsOutputByToken is a function type with string as parameter.
 type genQueryResultsOutputByToken func(token string) (*athena.GetQueryResultsOutput, error)
 
-// mockAthenaClient is a type embedding of athenaiface.AthenaAPI, which we want to mock against.
+// mockAthenaClient is a type embedding of AthenaAPI, which we want to mock against.
 type mockAthenaClient struct {
-	// inner type is interface athenaiface.AthenaAPI
-	athenaiface.AthenaAPI
+	// inner type is interface AthenaAPI
+	AthenaAPI
 
 	// queryToResultsGenMap is a map from string to a function type genQueryResultsOutputByToken.
 	queryToResultsGenMap map[string]genQueryResultsOutputByToken
@@ -49,7 +49,7 @@ type mockAthenaClient struct {
 }
 
 func newMockAthenaClient() *mockAthenaClient {
-	var m = mockAthenaClient{
+	m := mockAthenaClient{
 		queryToResultsGenMap: map[string]genQueryResultsOutputByToken{
 			"SELECT_OK":                            MultiplePagesQueryResponse,
 			"SELECT_GetQueryResults_ERR":           MultiplePagesQueryFailedResponse,
@@ -73,42 +73,34 @@ func newMockAthenaClient() *mockAthenaClient {
 	return &m
 }
 
-// GetQueryResults is a mock against athenaiface.AthenaAPI.GetQueryResults().
-func (m *mockAthenaClient) GetQueryResults(query *athena.
-	GetQueryResultsInput) (*athena.GetQueryResultsOutput, error) {
-	var nextToken = ""
+// GetQueryResults is a mock against AthenaAPI.GetQueryResults().
+func (m *mockAthenaClient) GetQueryResults(ctx context.Context,
+	query *athena.GetQueryResultsInput, optFns ...func(*athena.Options)) (*athena.
+	GetQueryResultsOutput, error,
+) {
+	nextToken := ""
 	if query.NextToken != nil {
 		nextToken = *query.NextToken
 	}
-	return m.queryToResultsGenMap[*query.QueryExecutionId](nextToken)
-}
-
-// GetQueryResultsWithContext is a mock against athenaiface.AthenaAPI.GetQueryResultsWithContext().
-func (m *mockAthenaClient) GetQueryResultsWithContext(ctx aws.Context,
-	query *athena.GetQueryResultsInput, opt ...request.Option) (*athena.
-	GetQueryResultsOutput, error) {
-	var nextToken = ""
-	if query.NextToken != nil {
-		nextToken = *query.NextToken
-	}
-	if *query.QueryExecutionId == "GetQueryResultsWithContext_return_error" {
+	if *query.QueryExecutionId == "GetQueryResults_return_error" {
 		return nil, ErrTestMockGeneric
 	}
-	if nextToken == "GetQueryResultsWithContext_return_error" {
+	if nextToken == "GetQueryResults_return_error" {
 		return nil, ErrTestMockGeneric
 	}
 	return m.queryToResultsGenMap[*query.QueryExecutionId](nextToken)
 }
 
-func (m *mockAthenaClient) GetWorkGroupWithContext(ctx aws.Context, gwi *athena.GetWorkGroupInput,
-	opt ...request.Option) (*athena.GetWorkGroupOutput, error) {
+func (m *mockAthenaClient) GetWorkGroup(ctx context.Context, gwi *athena.GetWorkGroupInput,
+	optFns ...func(*athena.Options),
+) (*athena.GetWorkGroupOutput, error) {
 	if m.GetWGStatus {
-		enabled := "ENABLED"
+		enabled := types.WorkGroupStateEnabled
 		if m.WGDisabled {
-			enabled = "DISABLED"
+			enabled = types.WorkGroupStateDisabled
 		}
-		w := athena.WorkGroup{
-			State: &enabled,
+		w := types.WorkGroup{
+			State: enabled,
 		}
 		a := athena.GetWorkGroupOutput{
 			WorkGroup: &w,
@@ -118,8 +110,9 @@ func (m *mockAthenaClient) GetWorkGroupWithContext(ctx aws.Context, gwi *athena.
 	return nil, ErrTestMockGeneric
 }
 
-func (m *mockAthenaClient) CreateWorkGroup(*athena.CreateWorkGroupInput) (
-	*athena.CreateWorkGroupOutput, error) {
+func (m *mockAthenaClient) CreateWorkGroup(ctx context.Context, req *athena.CreateWorkGroupInput, optFns ...func(*athena.Options)) (
+	*athena.CreateWorkGroupOutput, error,
+) {
 	if !m.CreateWGStatus {
 		return nil, ErrTestMockGeneric
 	}
@@ -127,8 +120,11 @@ func (m *mockAthenaClient) CreateWorkGroup(*athena.CreateWorkGroupInput) (
 	return &a, nil
 }
 
-func (m *mockAthenaClient) StartQueryExecution(s *athena.
-	StartQueryExecutionInput) (*athena.StartQueryExecutionOutput, error) {
+func (m *mockAthenaClient) StartQueryExecution(
+	ctx context.Context,
+	s *athena.StartQueryExecutionInput,
+	optFns ...func(*athena.Options),
+) (*athena.StartQueryExecutionOutput, error) {
 	if strings.ToLower(*s.QueryString) == "select 1" { // Ping
 		qid := "PING_OK_QID"
 		return &athena.StartQueryExecutionOutput{
@@ -182,23 +178,17 @@ func (m *mockAthenaClient) StartQueryExecution(s *athena.
 	if *s.QueryString == "StartQueryExecution_nil_error" {
 		return nil, ErrTestMockGeneric
 	}
-	if *s.QueryString == "When_StartQueryExecution_Succeed_but_GetQueryExecutionWithContext_return_nil_and_error" {
-		qid := "When_StartQueryExecution_Succeed_but_GetQueryExecutionWithContext_return_nil_and_error_QID"
+	if *s.QueryString == "When_StartQueryExecution_Succeed_but_GetQueryExecution_return_nil_and_error" {
+		qid := "When_StartQueryExecution_Succeed_but_GetQueryExecution_return_nil_and_error_QID"
 		return &athena.StartQueryExecutionOutput{
 			QueryExecutionId: &qid,
 		}, nil
 	}
-	if *s.QueryString == "StartQueryExecution_OK_GetQueryExecutionWithContext_QueryExecutionStateCancelled" {
-		qid := "QueryExecutionStateCancelled_QID"
-		return &athena.StartQueryExecutionOutput{
-			QueryExecutionId: &qid,
-		}, nil
+	if *s.QueryString == "StartQueryExecution_OK_GetQueryExecution_QueryExecutionStateCancelled" {
+		return nil, context.Canceled
 	}
-	if *s.QueryString == "StartQueryExecution_OK_GetQueryExecutionWithContext_QueryExecutionStateFailed" {
-		qid := "QueryExecutionStateFailed_QID"
-		return &athena.StartQueryExecutionOutput{
-			QueryExecutionId: &qid,
-		}, nil
+	if *s.QueryString == "StartQueryExecution_OK_GetQueryExecution_QueryExecutionStateFailed" {
+		return nil, ErrTestMockFailedByAthena
 	}
 	if *s.QueryString == "FAILED_AFTER_GETQID" {
 		qid := "FAILED_AFTER_GETQID_123"
@@ -210,15 +200,25 @@ func (m *mockAthenaClient) StartQueryExecution(s *athena.
 		qid := "FAILED_AFTER_GETQID_123"
 		return &athena.StartQueryExecutionOutput{
 				QueryExecutionId: &qid,
-			}, awserr.NewRequestFailure(awserr.New("a", "b", fmt.Errorf("FAILED_AFTER_GETQID_FAILED")),
-				100, qid)
+			}, &awshttp.ResponseError{
+				ResponseError: &smithyhttp.ResponseError{
+					Response: &smithyhttp.Response{
+						Response: &http.Response{
+							StatusCode: 100,
+						},
+					},
+					Err: fmt.Errorf("FAILED_AFTER_GETQID_FAILED"),
+				},
+				RequestID: qid,
+			}
 	}
 	return nil, nil
 }
 
-func (m *mockAthenaClient) GetQueryExecutionWithContext(c aws.Context,
-	input *athena.GetQueryExecutionInput, o ...request.Option) (*athena.GetQueryExecutionOutput, error) {
-	if *input.QueryExecutionId == "When_StartQueryExecution_Succeed_but_GetQueryExecutionWithContext_return_nil_and_error_QID" {
+func (m *mockAthenaClient) GetQueryExecution(c context.Context,
+	input *athena.GetQueryExecutionInput, optFns ...func(*athena.Options),
+) (*athena.GetQueryExecutionOutput, error) {
+	if *input.QueryExecutionId == "When_StartQueryExecution_Succeed_but_GetQueryExecution_return_nil_and_error_QID" {
 		return nil, ErrTestMockGeneric
 	}
 	if *input.QueryExecutionId == "QueryExecutionStateCancelled_QID" {
@@ -229,29 +229,29 @@ func (m *mockAthenaClient) GetQueryExecutionWithContext(c aws.Context,
 	}
 	if *input.QueryExecutionId == "PING_OK_QID" {
 		ping := "PING_OK_QID"
-		stat := athena.QueryExecutionStateSucceeded
+		stat := types.QueryExecutionStateSucceeded
 		return &athena.GetQueryExecutionOutput{
-			QueryExecution: &athena.QueryExecution{
+			QueryExecution: &types.QueryExecution{
 				Query:            &ping,
 				QueryExecutionId: &ping,
-				Status: &athena.QueryExecutionStatus{
-					State: &stat,
+				Status: &types.QueryExecutionStatus{
+					State: stat,
 				},
 			},
 		}, nil
 	}
 	if *input.QueryExecutionId == "SELECTExecContext_OK_QID" {
 		ping := "SELECTExecContext_OK_QID"
-		stat := athena.QueryExecutionStateSucceeded
-		var dataScanned = int64(123)
+		stat := types.QueryExecutionStateSucceeded
+		dataScanned := int64(123)
 		return &athena.GetQueryExecutionOutput{
-			QueryExecution: &athena.QueryExecution{
+			QueryExecution: &types.QueryExecution{
 				Query:            &ping,
 				QueryExecutionId: &ping,
-				Status: &athena.QueryExecutionStatus{
-					State: &stat,
+				Status: &types.QueryExecutionStatus{
+					State: stat,
 				},
-				Statistics: &athena.QueryExecutionStatistics{
+				Statistics: &types.QueryExecutionStatistics{
 					DataScannedInBytes: &dataScanned,
 				},
 			},
@@ -259,33 +259,33 @@ func (m *mockAthenaClient) GetQueryExecutionWithContext(c aws.Context,
 	}
 	if *input.QueryExecutionId == "SELECTQueryContext_OK_QID" {
 		ping := "SELECTQueryContext_OK_QID"
-		stat := athena.QueryExecutionStateSucceeded
-		stt := "DDL"
+		stat := types.QueryExecutionStateSucceeded
+		stt := types.StatementTypeDdl
 		return &athena.GetQueryExecutionOutput{
-			QueryExecution: &athena.QueryExecution{
+			QueryExecution: &types.QueryExecution{
 				Query:            &ping,
 				QueryExecutionId: &ping,
-				Status: &athena.QueryExecutionStatus{
-					State: &stat,
+				Status: &types.QueryExecutionStatus{
+					State: stat,
 				},
-				StatementType: &stt,
+				StatementType: stt,
 			},
 		}, nil
 	}
 	if *input.QueryExecutionId == "SELECTQueryContext_CANCEL_OK_QID" {
 		ping := "SELECTQueryContext_CANCEL_OK_QID"
-		stat := athena.QueryExecutionStateQueued
-		stt := "DDL"
-		var dataScanned = int64(123)
+		stat := types.QueryExecutionStateQueued
+		stt := types.StatementTypeDdl
+		dataScanned := int64(123)
 		return &athena.GetQueryExecutionOutput{
-			QueryExecution: &athena.QueryExecution{
+			QueryExecution: &types.QueryExecution{
 				Query:            &ping,
 				QueryExecutionId: &ping,
-				Status: &athena.QueryExecutionStatus{
-					State: &stat,
+				Status: &types.QueryExecutionStatus{
+					State: stat,
 				},
-				StatementType: &stt,
-				Statistics: &athena.QueryExecutionStatistics{
+				StatementType: stt,
+				Statistics: &types.QueryExecutionStatistics{
 					DataScannedInBytes: &dataScanned,
 				},
 			},
@@ -293,16 +293,16 @@ func (m *mockAthenaClient) GetQueryExecutionWithContext(c aws.Context,
 	}
 	if *input.QueryExecutionId == "SELECTQueryContext_AWS_CANCEL_QID" {
 		ping := "SELECTQueryContext_AWS_CANCEL_QID"
-		var dataScanned = int64(123)
-		stat := athena.QueryExecutionStateCancelled
+		dataScanned := int64(123)
+		stat := types.QueryExecutionStateCancelled
 		return &athena.GetQueryExecutionOutput{
-			QueryExecution: &athena.QueryExecution{
+			QueryExecution: &types.QueryExecution{
 				Query:            &ping,
 				QueryExecutionId: &ping,
-				Status: &athena.QueryExecutionStatus{
-					State: &stat,
+				Status: &types.QueryExecutionStatus{
+					State: stat,
 				},
-				Statistics: &athena.QueryExecutionStatistics{
+				Statistics: &types.QueryExecutionStatistics{
 					DataScannedInBytes: &dataScanned,
 				},
 			},
@@ -310,14 +310,14 @@ func (m *mockAthenaClient) GetQueryExecutionWithContext(c aws.Context,
 	}
 	if *input.QueryExecutionId == "SELECTQueryContext_AWS_FAIL_QID" {
 		ping := "SELECTQueryContext_AWS_FAIL_QID"
-		stat := athena.QueryExecutionStateFailed
+		stat := types.QueryExecutionStateFailed
 		reason := "something_broken"
 		return &athena.GetQueryExecutionOutput{
-			QueryExecution: &athena.QueryExecution{
+			QueryExecution: &types.QueryExecution{
 				Query:            &ping,
 				QueryExecutionId: &ping,
-				Status: &athena.QueryExecutionStatus{
-					State:             &stat,
+				Status: &types.QueryExecutionStatus{
+					State:             stat,
 					StateChangeReason: &reason,
 				},
 			},
@@ -325,46 +325,46 @@ func (m *mockAthenaClient) GetQueryExecutionWithContext(c aws.Context,
 	}
 	if *input.QueryExecutionId == "SELECTQueryContext_CANCEL_FAIL_QID" {
 		ping := "SELECTQueryContext_CANCEL_FAIL_QID"
-		stat := athena.QueryExecutionStateQueued
+		stat := types.QueryExecutionStateQueued
 		return &athena.GetQueryExecutionOutput{
-			QueryExecution: &athena.QueryExecution{
+			QueryExecution: &types.QueryExecution{
 				Query:            &ping,
 				QueryExecutionId: &ping,
-				Status: &athena.QueryExecutionStatus{
-					State: &stat,
+				Status: &types.QueryExecutionStatus{
+					State: stat,
 				},
 			},
 		}, nil
 	}
 	if *input.QueryExecutionId == "SELECTQueryContext_TIMEOUT_QID" {
 		ping := "SELECTQueryContext_TIMEOUT_QID"
-		stat := athena.QueryExecutionStateQueued
-		stt := "TIMEOUT_NOW"
+		stat := types.QueryExecutionStateQueued
+		stt := types.StatementTypeDml
 		return &athena.GetQueryExecutionOutput{
-			QueryExecution: &athena.QueryExecution{
+			QueryExecution: &types.QueryExecution{
 				Query:            &ping,
 				QueryExecutionId: &ping,
-				Status: &athena.QueryExecutionStatus{
-					State: &stat,
+				Status: &types.QueryExecutionStatus{
+					State: stat,
 				},
-				StatementType: &stt,
+				StatementType: stt,
 			},
 		}, nil
 	}
 	if *input.QueryExecutionId == "c89088ab-595d-4ee6-a9ce-73b55aeb8900" {
 		ping := "SELECTQueryContext_CANCEL_OK_QID"
-		stat := athena.QueryExecutionStateQueued
-		stt := "DDL"
-		var dataScanned = int64(123)
+		stat := types.QueryExecutionStateQueued
+		stt := types.StatementTypeDdl
+		dataScanned := int64(123)
 		return &athena.GetQueryExecutionOutput{
-			QueryExecution: &athena.QueryExecution{
+			QueryExecution: &types.QueryExecution{
 				Query:            &ping,
 				QueryExecutionId: &ping,
-				Status: &athena.QueryExecutionStatus{
-					State: &stat,
+				Status: &types.QueryExecutionStatus{
+					State: stat,
 				},
-				StatementType: &stt,
-				Statistics: &athena.QueryExecutionStatistics{
+				StatementType: stt,
+				Statistics: &types.QueryExecutionStatistics{
 					DataScannedInBytes: &dataScanned,
 				},
 			},
@@ -373,8 +373,9 @@ func (m *mockAthenaClient) GetQueryExecutionWithContext(c aws.Context,
 	return nil, ErrTestMockGeneric
 }
 
-func (m *mockAthenaClient) StopQueryExecutionWithContext(ctx aws.Context, input *athena.StopQueryExecutionInput,
-	opt ...request.Option) (*athena.StopQueryExecutionOutput, error) {
+func (m *mockAthenaClient) StopQueryExecution(ctx context.Context, input *athena.StopQueryExecutionInput,
+	optFns ...func(*athena.Options),
+) (*athena.StopQueryExecutionOutput, error) {
 	if *input.QueryExecutionId == "SELECTQueryContext_CANCEL_OK_QID" {
 		return &athena.StopQueryExecutionOutput{}, nil
 	}
@@ -394,7 +395,7 @@ func MultiplePagesQueryResponse(token string) (*athena.GetQueryResultsOutput, er
 	columns := createTestColumns()
 	switch token {
 	case "":
-		var nextToken = "a1"
+		nextToken := "a1"
 		return newRandomHeaderResultPage(columns, &nextToken, 6), nil
 	case "a1":
 		nextToken := "a2"
@@ -414,11 +415,12 @@ func MultiplePagesQueryResponse(token string) (*athena.GetQueryResultsOutput, er
 
 // page contains 0 row, missing row in the page
 func MultiplePagesQueryFailedResponse(token string) (*athena.GetQueryResultsOutput,
-	error) {
+	error,
+) {
 	columns := createTestColumns()
 	switch token {
 	case "":
-		var nextToken = "a1"
+		nextToken := "a1"
 		return newRandomHeaderResultPage(columns, &nextToken, 6), nil
 	case "a1":
 		nextToken := "a2"
@@ -427,7 +429,7 @@ func MultiplePagesQueryFailedResponse(token string) (*athena.GetQueryResultsOutp
 		nextToken := "a3"
 		return newRandomHeaderlessResultPage(columns, &nextToken, 5), nil
 	case "a3":
-		nextToken := "GetQueryResultsWithContext_return_error"
+		nextToken := "GetQueryResults_return_error"
 		return newRandomHeaderlessResultPage(columns, &nextToken, 5), nil
 	case "a4":
 		return newRandomHeaderlessResultPage(columns, nil, 10), nil
@@ -438,11 +440,12 @@ func MultiplePagesQueryFailedResponse(token string) (*athena.GetQueryResultsOutp
 
 // page contains 0 row, missing row in the page
 func MultiplePagesEmptyRowInPageResponse(token string) (*athena.GetQueryResultsOutput,
-	error) {
+	error,
+) {
 	columns := createTestColumns()
 	switch token {
 	case "":
-		var nextToken = "a1"
+		nextToken := "a1"
 		return newRandomHeaderResultPage(columns, &nextToken, 6), nil
 	case "a1":
 		nextToken := "a2"
@@ -451,7 +454,7 @@ func MultiplePagesEmptyRowInPageResponse(token string) (*athena.GetQueryResultsO
 		nextToken := "a3"
 		return newRandomHeaderlessResultPage(columns, &nextToken, 5), nil
 	case "a3":
-		nextToken := "GetQueryResultsWithContext_return_error"
+		nextToken := "GetQueryResults_return_error"
 		return newRandomHeaderlessResultPage(columns, &nextToken, 5), nil
 	case "a4":
 		return newRandomHeaderlessResultPage(columns, nil, 10), nil
@@ -461,21 +464,22 @@ func MultiplePagesEmptyRowInPageResponse(token string) (*athena.GetQueryResultsO
 }
 
 func ShowResponse(_ string) (*athena.GetQueryResultsOutput, error) {
-	columns := []*athena.ColumnInfo{
+	columns := []types.ColumnInfo{
 		newColumnInfo("partition", "string"),
 	}
 	return newRandomHeaderResultPage(columns, nil, 6), nil
 }
 
 func OneColumnZeroRowResponse(token string) (*athena.GetQueryResultsOutput,
-	error) {
+	error,
+) {
 	switch token {
 	case "":
 		c := newColumnInfo("a", nil)
 		getQueryResultsOutput := &athena.GetQueryResultsOutput{
-			ResultSet: &athena.ResultSet{
-				ResultSetMetadata: &athena.ResultSetMetadata{
-					ColumnInfo: []*athena.ColumnInfo{
+			ResultSet: &types.ResultSet{
+				ResultSetMetadata: &types.ResultSetMetadata{
+					ColumnInfo: []types.ColumnInfo{
 						c,
 					},
 				},
@@ -488,15 +492,16 @@ func OneColumnZeroRowResponse(token string) (*athena.GetQueryResultsOutput,
 }
 
 func OneColumnZeroRowResponseValid(token string) (*athena.GetQueryResultsOutput,
-	error) {
+	error,
+) {
 	switch token {
 	case "":
 		c := newColumnInfo("rows", nil)
 		var i int64 = 1024
 		getQueryResultsOutput := &athena.GetQueryResultsOutput{
-			ResultSet: &athena.ResultSet{
-				ResultSetMetadata: &athena.ResultSetMetadata{
-					ColumnInfo: []*athena.ColumnInfo{
+			ResultSet: &types.ResultSet{
+				ResultSetMetadata: &types.ResultSetMetadata{
+					ColumnInfo: []types.ColumnInfo{
 						c,
 					},
 				},
@@ -510,21 +515,22 @@ func OneColumnZeroRowResponseValid(token string) (*athena.GetQueryResultsOutput,
 }
 
 func ColumnMoreThanRowFieldResponse(token string) (*athena.GetQueryResultsOutput,
-	error) {
+	error,
+) {
 	switch token {
 	case "":
 		c1 := newColumnInfo("c1", nil)
 		c2 := newColumnInfo("c2", nil)
 		var i int64 = 1024
 		getQueryResultsOutput := &athena.GetQueryResultsOutput{
-			ResultSet: &athena.ResultSet{
-				ResultSetMetadata: &athena.ResultSetMetadata{
-					ColumnInfo: []*athena.ColumnInfo{
+			ResultSet: &types.ResultSet{
+				ResultSetMetadata: &types.ResultSetMetadata{
+					ColumnInfo: []types.ColumnInfo{
 						c1, c2,
 					},
 				},
-				Rows: []*athena.Row{
-					randRow([]*athena.ColumnInfo{
+				Rows: []types.Row{
+					randRow([]types.ColumnInfo{
 						c1,
 					}),
 				},
@@ -538,21 +544,22 @@ func ColumnMoreThanRowFieldResponse(token string) (*athena.GetQueryResultsOutput
 }
 
 func RowFieldMoreThanColumnsResponse(token string) (*athena.GetQueryResultsOutput,
-	error) {
+	error,
+) {
 	switch token {
 	case "":
 		c1 := newColumnInfo("c1", nil)
 		c2 := newColumnInfo("c2", nil)
 		var i int64 = 1024
 		getQueryResultsOutput := &athena.GetQueryResultsOutput{
-			ResultSet: &athena.ResultSet{
-				ResultSetMetadata: &athena.ResultSetMetadata{
-					ColumnInfo: []*athena.ColumnInfo{
+			ResultSet: &types.ResultSet{
+				ResultSetMetadata: &types.ResultSetMetadata{
+					ColumnInfo: []types.ColumnInfo{
 						c1,
 					},
 				},
-				Rows: []*athena.Row{
-					randRow([]*athena.ColumnInfo{
+				Rows: []types.Row{
+					randRow([]types.ColumnInfo{
 						c1, c2,
 					}),
 				},
@@ -566,20 +573,21 @@ func RowFieldMoreThanColumnsResponse(token string) (*athena.GetQueryResultsOutpu
 }
 
 func MissingDataResponse(token string) (*athena.GetQueryResultsOutput,
-	error) {
+	error,
+) {
 	switch token {
 	case "":
 		c1 := newColumnInfo("c1", "integer")
 		var i int64 = 1024
 		getQueryResultsOutput := &athena.GetQueryResultsOutput{
-			ResultSet: &athena.ResultSet{
-				ResultSetMetadata: &athena.ResultSetMetadata{
-					ColumnInfo: []*athena.ColumnInfo{
+			ResultSet: &types.ResultSet{
+				ResultSetMetadata: &types.ResultSetMetadata{
+					ColumnInfo: []types.ColumnInfo{
 						c1,
 					},
 				},
-				Rows: []*athena.Row{
-					missingDataRow([]*athena.ColumnInfo{
+				Rows: []types.Row{
+					missingDataRow([]types.ColumnInfo{
 						c1,
 					}),
 				},
@@ -593,20 +601,21 @@ func MissingDataResponse(token string) (*athena.GetQueryResultsOutput,
 }
 
 func headPageWithColumnButNoRowResponse(token string) (*athena.GetQueryResultsOutput,
-	error) {
+	error,
+) {
 	switch token {
 	case "":
 		c2 := newColumnInfo("c2", "string")
 		var i int64 = 1024
 		getQueryResultsOutput := &athena.GetQueryResultsOutput{
-			ResultSet: &athena.ResultSet{
-				ResultSetMetadata: &athena.ResultSetMetadata{
-					ColumnInfo: []*athena.ColumnInfo{
+			ResultSet: &types.ResultSet{
+				ResultSetMetadata: &types.ResultSetMetadata{
+					ColumnInfo: []types.ColumnInfo{
 						c2,
 					},
 				},
-				Rows: []*athena.Row{
-					missingDataRow([]*athena.ColumnInfo{
+				Rows: []types.Row{
+					missingDataRow([]types.ColumnInfo{
 						c2,
 					}),
 				},
@@ -620,20 +629,21 @@ func headPageWithColumnButNoRowResponse(token string) (*athena.GetQueryResultsOu
 }
 
 func PingResponse(token string) (*athena.GetQueryResultsOutput,
-	error) {
+	error,
+) {
 	switch token {
 	case "":
 		c2 := newColumnInfo("_col0", "integer")
 		var i int64 = 1024
 		getQueryResultsOutput := &athena.GetQueryResultsOutput{
-			ResultSet: &athena.ResultSet{
-				ResultSetMetadata: &athena.ResultSetMetadata{
-					ColumnInfo: []*athena.ColumnInfo{
+			ResultSet: &types.ResultSet{
+				ResultSetMetadata: &types.ResultSetMetadata{
+					ColumnInfo: []types.ColumnInfo{
 						c2,
 					},
 				},
-				Rows: []*athena.Row{
-					randRow([]*athena.ColumnInfo{
+				Rows: []types.Row{
+					randRow([]types.ColumnInfo{
 						c2,
 					}),
 				},
@@ -650,15 +660,15 @@ func NextFailedResponse(token string) (*athena.GetQueryResultsOutput, error) {
 	columns := createTestColumns()
 	switch token {
 	case "":
-		var nextToken = "p1"
+		nextToken := "p1"
 		return newRandomHeaderResultPage(columns, &nextToken, 5), nil
 	default:
 		return nil, ErrTestMockGeneric
 	}
 }
 
-func createTestColumns() []*athena.ColumnInfo {
-	return []*athena.ColumnInfo{
+func createTestColumns() []types.ColumnInfo {
+	return []types.ColumnInfo{
 		newColumnInfo("test_array", "array"),
 		newColumnInfo("active", "boolean"),
 		newColumnInfo("company_name", "string"),

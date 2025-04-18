@@ -28,7 +28,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/service/athena"
+	"github.com/aws/aws-sdk-go-v2/service/athena"
+	"github.com/aws/aws-sdk-go-v2/service/athena/types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -224,7 +225,6 @@ func TestRows_ColumnTypeDatabaseTypeName(t *testing.T) {
 			testConf, NewDefaultObservability(testConf))
 		for i, v := range cs {
 			assert.Equal(t, r.ColumnTypeDatabaseTypeName(i), *v.Type)
-
 		}
 
 	}
@@ -252,9 +252,11 @@ func TestRows_GetDefaultValueForColumnType(t *testing.T) {
 		for _, v := range []string{"tinyint", "smallint", "integer", "bigint"} {
 			assert.Equal(t, r.getDefaultValueForColumnType(v), 0)
 		}
-		for _, v := range []string{"json", "char", "varchar", "varbinary", "row", "string", "binary",
+		for _, v := range []string{
+			"json", "char", "varchar", "varbinary", "row", "string", "binary",
 			"struct", "interval year to month", "interval day to second", "decimal",
-			"ipaddress", "array", "map", "unknown"} {
+			"ipaddress", "array", "map", "unknown",
+		} {
 			assert.Equal(t, r.getDefaultValueForColumnType(v), "")
 		}
 		for _, v := range []string{"float", "double", "real"} {
@@ -357,10 +359,12 @@ func TestRows_AthenaTypeToGoType(t *testing.T) {
 	assert.Nil(t, g)
 
 	// string-like
-	for _, s := range []string{"json", "char", "varchar", "varbinary", "row",
+	for _, s := range []string{
+		"json", "char", "varchar", "varbinary", "row",
 		"string", "binary",
 		"struct", "interval year to month", "interval day to second", "decimal",
-		"ipaddress", "array", "map", "unknown"} {
+		"ipaddress", "array", "map", "unknown",
+	} {
 		c = newColumnInfo("a", s)
 		rv = "012"
 		g, e = r.athenaTypeToGoType(c, &rv, testConf)
@@ -389,8 +393,10 @@ func TestRows_AthenaTypeToGoType(t *testing.T) {
 
 	// date and time
 	now := time.Now()
-	for _, s := range []string{"date", "time", "time with time zone",
-		"timestamp", "timestamp with time zone"} {
+	for _, s := range []string{
+		"date", "time", "time with time zone",
+		"timestamp", "timestamp with time zone",
+	} {
 		c = newColumnInfo("a", s)
 		rv = "2020-01-20"
 		g, e = r.athenaTypeToGoType(c, &rv, testConf)
@@ -449,9 +455,9 @@ func TestRows_ColumnTypeDatabaseTypeName2(t *testing.T) {
 		"SELECT_OK", testConf, NewDefaultObservability(testConf))
 	c := newColumnInfo("a", nil)
 	getQueryResultsOutput := &athena.GetQueryResultsOutput{
-		ResultSet: &athena.ResultSet{
-			ResultSetMetadata: &athena.ResultSetMetadata{
-				ColumnInfo: []*athena.ColumnInfo{
+		ResultSet: &types.ResultSet{
+			ResultSetMetadata: &types.ResultSetMetadata{
+				ColumnInfo: []types.ColumnInfo{
 					c,
 				},
 			},
@@ -489,7 +495,7 @@ func TestRows_NewRows(t *testing.T) {
 	assert.NotNil(t, r)
 
 	r, e = NewRows(context.Background(), newMockAthenaClient(),
-		"GetQueryResultsWithContext_return_error",
+		"GetQueryResults_return_error",
 		testConf, NewDefaultObservability(testConf))
 	assert.NotNil(t, e)
 	assert.Nil(t, r)
@@ -569,5 +575,4 @@ func TestRows_NewRows(t *testing.T) {
 		}
 		cnt++
 	}
-
 }

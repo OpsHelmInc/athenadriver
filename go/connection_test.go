@@ -28,14 +28,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/athena"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/athena"
 	"github.com/stretchr/testify/assert"
 )
 
-var regions = []string{"ap-east-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3",
+var regions = []string{
+	"ap-east-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3",
 	"me-south-1", "us-east-1", "us-west-1", "ap-northeast-1", "ap-northeast-2", "ap-southeast-1",
 	"ca-central-1", "us-east-2", "ap-south-1", "ap-southeast-2", "us-west-2",
 }
@@ -154,7 +154,6 @@ func TestConnection_Close(t *testing.T) {
 	assert.Nil(t, err)
 	assert.NotNil(t, conn)
 	assert.Nil(t, conn.Close())
-
 }
 
 func TestConnection_QueryContext(t *testing.T) {
@@ -329,82 +328,86 @@ func TestBuildExecutionParams(t *testing.T) {
 		name        string
 		inputArgs   []driver.Value
 		expectedErr error
-		expected    []*string
+		expected    []string
 	}{
 		{
 			name:        "No arguments",
 			inputArgs:   []driver.Value{},
 			expectedErr: nil,
-			expected:    []*string{},
+			expected:    []string{},
 		},
 		{
 			name:        "Bool",
 			inputArgs:   []driver.Value{true, false},
 			expectedErr: nil,
-			expected:    []*string{aws.String("1"), aws.String("0")},
+			expected:    []string{"1", "0"},
 		},
 		{
 			name:        "Zero-value time",
 			inputArgs:   []driver.Value{time.Time{}},
 			expectedErr: nil,
-			expected:    []*string{aws.String("'0000-00-00'")}, // Special-cased. Matches interpolateParams behavior.
+			expected:    []string{"'0000-00-00'"}, // Special-cased. Matches interpolateParams behavior.
 		},
 		{
 			// Like interpolateParams(), buildExecutionParams() adds an additional 500 nanoseconds.
 			name:        "501 nanoseconds is still < 1 microsecond", // From TestConnection_InterpolateParams_Bool
 			inputArgs:   []driver.Value{time.Time{}.Add(time.Nanosecond)},
 			expectedErr: nil,
-			expected:    []*string{aws.String("'0001-01-01 00:00:00'")}, // Matches interpolateParams behavior.
+			expected:    []string{"'0001-01-01 00:00:00'"}, // Matches interpolateParams behavior.
 		},
 		{
 			name:        "For non-zero-value time.Times, Date and time are present, even if time is zero-value",
 			inputArgs:   []driver.Value{testTime},
 			expectedErr: nil,
-			expected:    []*string{aws.String("'2024-07-01 00:00:00'")},
+			expected:    []string{"'2024-07-01 00:00:00'"},
 		},
 		{
 			name:        "Datetime with Microseconds",
 			inputArgs:   []driver.Value{testTimeMicro},
 			expectedErr: nil,
-			expected:    []*string{aws.String("'2024-07-02 01:02:03.123456'")},
+			expected:    []string{"'2024-07-02 01:02:03.123456'"},
 		},
 		{
 			name:        "Byte Slice - Caller must use utils.go/FormatBytes before passing in query args",
 			inputArgs:   []driver.Value{[]byte{'0'}},
 			expectedErr: nil,
-			expected:    []*string{aws.String("0")}, // No change
+			expected:    []string{"0"}, // No change
 		},
 		{
 			name:        "Byte Slice - After FormatBytes",
 			inputArgs:   []driver.Value{FormatBytes([]byte{'0'})},
 			expectedErr: nil,
-			expected:    []*string{aws.String("_binary'0'")},
+			expected:    []string{"_binary'0'"},
 		},
 		{
 			name:        "String - Caller must use utils.go/FormatString before passing in query args",
 			inputArgs:   []driver.Value{"This is a string"},
 			expectedErr: nil,
-			expected:    []*string{aws.String("This is a string")}, // No change
+			expected:    []string{"This is a string"}, // No change
 		},
 		{
 			name:        "String - After FormatString",
 			inputArgs:   []driver.Value{FormatString("This is a string with ' single quotes and \n chars")},
 			expectedErr: nil,
-			expected:    []*string{aws.String("'This is a string with '' single quotes and \\n chars'")},
+			expected:    []string{"'This is a string with '' single quotes and \\n chars'"},
 		},
 		{
 			name:        "Nil -> NULL",
 			inputArgs:   []driver.Value{nil},
 			expectedErr: nil,
-			expected:    []*string{aws.String("NULL")},
+			expected:    []string{"NULL"},
 		},
 		{
 			name: "Every supported type",
-			inputArgs: []driver.Value{int64(-10), uint64(42), 1.23, true, testTime, []byte("This is a slice of bytes"),
-				"This is a string"},
+			inputArgs: []driver.Value{
+				int64(-10), uint64(42), 1.23, true, testTime, []byte("This is a slice of bytes"),
+				"This is a string",
+			},
 			expectedErr: nil,
-			expected: []*string{aws.String("-10"), aws.String("42"), aws.String("1.23"), aws.String("1"),
-				aws.String("'2024-07-01 00:00:00'"), aws.String("This is a slice of bytes"), aws.String("This is a string")},
+			expected: []string{
+				"-10", "42", "1.23", "1",
+				"'2024-07-01 00:00:00'", "This is a slice of bytes", "This is a string",
+			},
 		},
 	}
 	c := createTestConnection(t)
@@ -433,16 +436,11 @@ func TestCheckNamedValue(t *testing.T) {
 func createTestConnection(t *testing.T) *Connection {
 	t.Parallel()
 	testConf := NewNoOpsConfig()
-	staticCredentials := credentials.NewStaticCredentials(testConf.GetAccessID(),
-		testConf.GetSecretAccessKey(),
-		testConf.GetSessionToken())
-	awsConfig := &aws.Config{
-		Region:      aws.String(testConf.GetRegion()),
-		Credentials: staticCredentials,
-	}
-	awsAthenaSession, err := session.NewSession(awsConfig)
+	awsConfig, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(testConf.GetAccessID(), testConf.GetSecretAccessKey(), testConf.GetSessionToken())),
+	)
 	assert.Nil(t, err)
-	athenaAPI := athena.New(awsAthenaSession)
+	athenaAPI := athena.NewFromConfig(awsConfig)
 	c := &Connection{
 		athenaAPI: athenaAPI,
 		connector: NoopsSQLConnector(),
@@ -461,16 +459,15 @@ func TestConnection_QueryContext2(t *testing.T) {
 	assert.Nil(t, driverRows)
 	assert.NotNil(t, err)
 
-	driverRows, err = c.QueryContext(context.Background(), "StartQueryExecution_OK_GetQueryExecutionWithContext_QueryExecutionStateCancelled",
+	driverRows, err = c.QueryContext(context.Background(), "StartQueryExecution_OK_GetQueryExecution_QueryExecutionStateCancelled",
 		[]driver.NamedValue{})
 	assert.Nil(t, driverRows)
-	assert.Equal(t, err, context.Canceled)
+	assert.Equal(t, context.Canceled, err)
 
-	driverRows, err = c.QueryContext(context.Background(), "StartQueryExecution_OK_GetQueryExecutionWithContext_QueryExecutionStateFailed",
+	driverRows, err = c.QueryContext(context.Background(), "StartQueryExecution_OK_GetQueryExecution_QueryExecutionStateFailed",
 		[]driver.NamedValue{})
 	assert.Nil(t, driverRows)
-	assert.Equal(t, err, ErrTestMockFailedByAthena)
-
+	assert.Equal(t, ErrTestMockFailedByAthena, err)
 }
 
 func TestConnection_QueryContext3(t *testing.T) {
@@ -588,7 +585,7 @@ func TestConnection_QueryContext6(t *testing.T) {
 	c.connector.config = testConf
 
 	e := c.Ping(context.Background())
-	assert.Equal(t, e, driver.ErrBadConn)
+	assert.Equal(t, driver.ErrBadConn, e)
 	driverRows, err := c.QueryContext(context.Background(), "StartQueryExecution_nil_error",
 		[]driver.NamedValue{})
 	assert.Nil(t, driverRows)
@@ -597,6 +594,7 @@ func TestConnection_QueryContext6(t *testing.T) {
 
 func TestConnection_QueryContext7(t *testing.T) {
 	t.Parallel()
+
 	c := createConnectionFixture()
 
 	e := c.Ping(context.Background())
@@ -612,15 +610,15 @@ func TestConnection_QueryContext7(t *testing.T) {
 	assert.Nil(t, dr)
 	assert.NotNil(t, er)
 
-	driverRows, err = c.QueryContext(context.Background(), "StartQueryExecution_OK_GetQueryExecutionWithContext_QueryExecutionStateCancelled",
+	driverRows, err = c.QueryContext(context.Background(), "StartQueryExecution_OK_GetQueryExecution_QueryExecutionStateCancelled",
 		[]driver.NamedValue{})
 	assert.Nil(t, driverRows)
-	assert.Equal(t, err, context.Canceled)
+	assert.Equal(t, context.Canceled, err)
 
-	driverRows, err = c.QueryContext(context.Background(), "StartQueryExecution_OK_GetQueryExecutionWithContext_QueryExecutionStateFailed",
+	driverRows, err = c.QueryContext(context.Background(), "StartQueryExecution_OK_GetQueryExecution_QueryExecutionStateFailed",
 		[]driver.NamedValue{})
 	assert.Nil(t, driverRows)
-	assert.Equal(t, err, ErrTestMockFailedByAthena)
+	assert.Equal(t, ErrTestMockFailedByAthena, err)
 
 	query := "SELECTExecContext_OK"
 	dr, er = c.ExecContext(context.Background(), query, []driver.NamedValue{})
@@ -660,7 +658,7 @@ func TestConnection_QueryContext7(t *testing.T) {
 
 	// After 3 seconds to get a timeout error
 	query = "SELECTQueryContext_TIMEOUT"
-	ctx, cancel = context.WithTimeout(context.Background(), 1*time.Hour)
+	ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	driverRows, err = c.QueryContext(ctx, query, []driver.NamedValue{})
 	assert.NotNil(t, err)
@@ -668,7 +666,7 @@ func TestConnection_QueryContext7(t *testing.T) {
 
 	query = randString(MAXQueryStringLength * 10)
 	driverRows, err = c.QueryContext(context.Background(), query, []driver.NamedValue{})
-	assert.Equal(t, err, ErrInvalidQuery)
+	assert.Equal(t, ErrInvalidQuery, err)
 	assert.Nil(t, driverRows)
 
 	// Cancelled by AWS Athena
@@ -722,6 +720,7 @@ func createConnectionFixture() *Connection {
 	testConf.SetDB(randString(8)) // default
 	testConf.SetWGRemoteCreationAllowed(true)
 	nm.CreateWGStatus = true
+	nm.GetWGStatus = true
 
 	_ = testConf.SetWorkGroup(wg)
 	c.connector.config = testConf
